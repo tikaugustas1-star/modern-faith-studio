@@ -10,12 +10,172 @@
   <main class="shell">
     <div class="eyebrow">MODERN FAITH STUDIO</div>
     <h1>Christian stories for a distracted world.</h1>
-    <p class="lead">Modern Faith Studio creates educational photo carousels about Scripture, prayer, and everyday Christian life.</p>
+    <p class="lead">Create, queue, publish, and review educational Christian photo carousels from one workspace.</p>
     <div class="actions">
-      <a class="button" href="/api/tiktok/login">Connect with TikTok</a>
+      <a class="button" id="connectButton" href="/api/tiktok/login">Connect with TikTok</a>
       <a class="button" href="terms.html">Terms of Service</a>
       <a class="button secondary" href="privacy.html">Privacy Policy</a>
     </div>
+
+    <section class="workspace" id="workspace" hidden>
+      <div class="workspace-head">
+        <div>
+          <div class="composer-kicker">CREATOR WORKSPACE</div>
+          <h2>Publish and learn</h2>
+          <p class="muted" id="creatorStatus">Loading your TikTok creator settings...</p>
+        </div>
+        <button class="button ghost" id="refreshButton" type="button">Refresh data</button>
+      </div>
+
+      <div class="metrics" id="metrics" aria-live="polite">
+        <div class="metric"><span>Followers</span><strong>—</strong></div>
+        <div class="metric"><span>Total likes</span><strong>—</strong></div>
+        <div class="metric"><span>Published videos</span><strong>—</strong></div>
+      </div>
+
+      <div class="workspace-grid">
+        <section class="card composer" aria-labelledby="composerTitle">
+          <div class="composer-kicker">TIKTOK DIRECT POST</div>
+          <h2 id="composerTitle">Build a carousel</h2>
+          <form id="postForm">
+            <label for="batch">Batch</label>
+            <select id="batch" required></select>
+            <label for="photoUrls">Photo URLs <span>(public HTTPS URLs)</span></label>
+            <textarea id="photoUrls" rows="7" required></textarea>
+            <label for="caption">Caption</label>
+            <textarea id="caption" rows="3" maxlength="2200" placeholder="Write a caption and hashtags..."></textarea>
+            <label for="privacy">Who can view this post?</label>
+            <select id="privacy" required></select>
+            <label class="consent"><input id="consent" type="checkbox" required> I confirm that I want to send this carousel to TikTok.</label>
+            <div class="inline-actions">
+              <button class="button" type="submit">Publish now</button>
+              <button class="button secondary" id="queueButton" type="button">Add to queue</button>
+            </div>
+            <p class="status" id="postStatus" role="status"></p>
+          </form>
+        </section>
+
+        <section class="card" aria-labelledby="queueTitle">
+          <div class="composer-kicker">CONTENT QUEUE</div>
+          <h2 id="queueTitle">Next posts</h2>
+          <p class="muted">The queue is saved in this browser. Server-side 24/7 scheduling will be enabled after a persistent store is connected.</p>
+          <div id="queueList" class="queue-list"></div>
+        </section>
+      </div>
+
+      <section class="card videos" aria-labelledby="videosTitle">
+        <div class="workspace-head compact">
+          <div>
+            <div class="composer-kicker">PERFORMANCE</div>
+            <h2 id="videosTitle">Recent TikTok videos</h2>
+          </div>
+          <span class="muted" id="analyticsStatus">Waiting for analytics permission...</span>
+        </div>
+        <div id="videoList" class="video-list"></div>
+      </section>
+    </section>
   </main>
+
+  <script>
+    const BASE = 'https://tikaugustas1-star.github.io/modern-faith-studio/images/';
+    const BATCHES = {
+      paisios_virgin_mary_style_4x5: {
+        label: 'Saint Paisios — Virgin Mary style 4:5',
+        images: ['01_paisios_hook.png','02_paisios_beginning.png','03_paisios_call.png','04_paisios_cell.png','05_paisios_counsel.png','06_paisios_teaching.png','07_paisios_legacy.png'].map(file => BASE + file)
+      }
+    };
+    const QUEUE_KEY = 'mfs_publish_queue_v1';
+    const workspace = document.getElementById('workspace');
+    const connectButton = document.getElementById('connectButton');
+    const creatorStatus = document.getElementById('creatorStatus');
+    const batch = document.getElementById('batch');
+    const photoUrls = document.getElementById('photoUrls');
+    const privacy = document.getElementById('privacy');
+    const postForm = document.getElementById('postForm');
+    const postStatus = document.getElementById('postStatus');
+    const queueList = document.getElementById('queueList');
+    const metrics = document.getElementById('metrics');
+    const videoList = document.getElementById('videoList');
+    const analyticsStatus = document.getElementById('analyticsStatus');
+
+    function getQueue() { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); }
+    function saveQueue(value) { localStorage.setItem(QUEUE_KEY, JSON.stringify(value)); renderQueue(); }
+    function selectedPayload() {
+      return {photo_images: photoUrls.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean), description: document.getElementById('caption').value, privacy_level: privacy.value};
+    }
+    function setBatch() { photoUrls.value = BATCHES[batch.value].images.join('\n'); }
+    function setStatus(message, error = false) { postStatus.textContent = message; postStatus.classList.toggle('error', error); }
+    function formatNumber(value) { return Number(value || 0).toLocaleString(); }
+
+    Object.entries(BATCHES).forEach(([value, item]) => batch.add(new Option(item.label, value)));
+    batch.addEventListener('change', setBatch);
+    setBatch();
+
+    function renderQueue() {
+      const items = getQueue();
+      queueList.innerHTML = items.length ? items.map(item => `
+        <div class="queue-item">
+          <div><strong>${item.batchLabel}</strong><small>${item.status}${item.publish_id ? ` · ${item.publish_id}` : ''}</small></div>
+          <div class="queue-actions">${item.status === 'queued' ? `<button class="text-button" data-publish="${item.id}" type="button">Publish</button>` : ''}<button class="text-button" data-remove="${item.id}" type="button">Remove</button></div>
+        </div>`).join('') : '<p class="muted">No queued posts yet.</p>';
+      queueList.querySelectorAll('[data-remove]').forEach(button => button.addEventListener('click', () => saveQueue(getQueue().filter(item => item.id !== button.dataset.remove))));
+      queueList.querySelectorAll('[data-publish]').forEach(button => button.addEventListener('click', async () => {
+        const item = getQueue().find(queueItem => queueItem.id === button.dataset.publish);
+        if (!item) return;
+        try { await publish(item.payload, item); } catch (error) { item.status = 'error'; saveQueue(getQueue().map(queueItem => queueItem.id === item.id ? item : queueItem)); setStatus(error.message, true); }
+      }));
+    }
+    renderQueue();
+
+    async function loadCreator() {
+      workspace.hidden = false;
+      connectButton.hidden = true;
+      try {
+        const response = await fetch('/api/tiktok/creator-info', {method: 'POST'});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not load TikTok creator info.');
+        creatorStatus.textContent = `Connected as @${data.creator_username || data.creator_nickname || 'TikTok creator'}.`;
+        privacy.replaceChildren();
+        (data.privacy_level_options || []).forEach(option => privacy.add(new Option(option.replaceAll('_', ' ').toLowerCase(), option)));
+        await loadAnalytics();
+      } catch (error) {
+        creatorStatus.textContent = error.message;
+        postForm.hidden = true;
+      }
+    }
+
+    async function loadAnalytics() {
+      analyticsStatus.textContent = 'Loading analytics...';
+      try {
+        const response = await fetch('/api/tiktok/analytics');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Analytics permission is not enabled.');
+        const user = data.user || {};
+        metrics.innerHTML = [['Followers', user.follower_count], ['Total likes', user.likes_count], ['Published videos', user.video_count]].map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${formatNumber(value)}</strong></div>`).join('');
+        videoList.innerHTML = (data.videos || []).map(video => `<article class="video-row"><div><strong>${video.title || video.video_description || 'Untitled post'}</strong><small>${new Date(Number(video.create_time || 0) * 1000).toLocaleString()}</small></div><div class="video-stats"><span>${formatNumber(video.view_count)} views</span><span>${formatNumber(video.like_count)} likes</span><span>${formatNumber(video.comment_count)} comments</span><span>${formatNumber(video.share_count)} shares</span></div></article>`).join('') || '<p class="muted">No public videos returned yet.</p>';
+        analyticsStatus.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+      } catch (error) {
+        analyticsStatus.textContent = error.message;
+        videoList.innerHTML = '<p class="muted">Add user.info.stats and video.list scopes, then reconnect TikTok.</p>';
+      }
+    }
+
+    async function publish(payload, queueItem = null) {
+      if (queueItem) { queueItem.status = 'publishing'; saveQueue(getQueue().map(item => item.id === queueItem.id ? queueItem : item)); }
+      setStatus('Sending to TikTok...');
+      const response = await fetch('/api/tiktok/post-photos', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'TikTok could not create the post.');
+      if (queueItem) { queueItem.status = 'submitted'; queueItem.publish_id = data.data?.publish_id || ''; saveQueue(getQueue().map(item => item.id === queueItem.id ? queueItem : item)); }
+      setStatus(`Post submitted. Publish ID: ${data.data?.publish_id || 'received'}`);
+      await loadAnalytics();
+    }
+
+    postForm.addEventListener('submit', async event => { event.preventDefault(); if (!document.getElementById('consent').checked) return; try { await publish(selectedPayload()); } catch (error) { setStatus(error.message, true); } });
+    document.getElementById('queueButton').addEventListener('click', () => { const item = {id: crypto.randomUUID(), batchLabel: BATCHES[batch.value].label, payload: selectedPayload(), status: 'queued', created_at: Date.now()}; saveQueue([...getQueue(), item]); setStatus('Added to the local queue.'); });
+    document.getElementById('refreshButton').addEventListener('click', loadAnalytics);
+
+    if (new URLSearchParams(location.search).get('connected') === '1') loadCreator();
+  </script>
 </body>
 </html>
