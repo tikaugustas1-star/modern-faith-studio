@@ -7,10 +7,10 @@ module.exports = (req, res) => {
 
   const state = crypto.randomBytes(24).toString('hex');
   const params = new URLSearchParams({
-    client_key: process.env.TIKTOK_CLIENT_KEY,
+    client_key: process.env.TIKTOK_CLIENT_KEY.trim(),
     response_type: 'code',
-    scope: 'user.info.basic',
-    redirect_uri: process.env.TIKTOK_REDIRECT_URI,
+    scope: process.env.TIKTOK_SCOPES || 'user.info.basic,video.publish',
+    redirect_uri: process.env.TIKTOK_REDIRECT_URI.trim(),
     state
   });
 
