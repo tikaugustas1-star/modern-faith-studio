@@ -1,4 +1,6 @@
 const https = require('https');
+const {setSession} = require('./session');
+const {saveAccount} = require('../_lib/supabase');
 
 function postForm(url, data) {
   return new Promise((resolve, reject) => {
@@ -35,23 +37,35 @@ module.exports = async (req, res) => {
   if (!code || !state || !stateCookie || state !== stateCookie) {
     return res.status(400).send('Invalid or expired TikTok OAuth state.');
   }
-  if (!process.env.TIKTOK_CLIENT_KEY || !process.env.TIKTOK_CLIENT_SECRET || !process.env.TIKTOK_REDIRECT_URI) {
+  if (!process.env.TIKTOK_CLIENT_KEY || !process.env.TIKTOK_CLIENT_SECRET || !process.env.TIKTOK_REDIRECT_URI || !process.env.TIKTOK_SESSION_SECRET) {
     return res.status(500).send('TikTok OAuth is not configured yet.');
   }
 
   try {
     const token = await postForm('https://open.tiktokapis.com/v2/oauth/token/', {
-      client_key: process.env.TIKTOK_CLIENT_KEY,
-      client_secret: process.env.TIKTOK_CLIENT_SECRET,
+      client_key: process.env.TIKTOK_CLIENT_KEY.trim(),
+      client_secret: process.env.TIKTOK_CLIENT_SECRET.trim(),
       code,
       grant_type: 'authorization_code',
-      redirect_uri: process.env.TIKTOK_REDIRECT_URI
+      redirect_uri: process.env.TIKTOK_REDIRECT_URI.trim()
     });
     if (!token.data || !token.data.access_token) {
       return res.status(400).send(`TikTok token exchange failed: ${JSON.stringify(token.data)}`);
     }
-    res.setHeader('Set-Cookie', 'tiktok_oauth_state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
-    return res.status(200).send('<!doctype html><meta charset="utf-8"><title>TikTok connected</title><style>body{font-family:Arial;max-width:640px;margin:80px auto;padding:24px;color:#10213f}h1{font-size:42px}</style><h1>TikTok connected.</h1><p>OAuth authorization completed successfully. The next step is adding the publishing review flow.</p>');
+    const session = {
+      open_id: token.data.open_id || '',
+      access_token: token.data.access_token,
+      refresh_token: token.data.refresh_token || '',
+      expires_at: Date.now() + Number(token.data.expires_in || 86400) * 1000
+    };
+    setSession(res, session);
+    try { await saveAccount(session); } catch { /* Supabase can be configured after OAuth is tested. */ }
+    const sessionCookie = res.getHeader('Set-Cookie');
+    res.setHeader('Set-Cookie', [
+      'tiktok_oauth_state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0',
+      sessionCookie
+    ].flat());
+    return res.redirect('/?connected=1');
   } catch (error) {
     return res.status(500).send(`TikTok OAuth error: ${error.message}`);
   }
