@@ -40,3 +40,6 @@ unapproved or unconsented content.
 
 On Vercel Pro, `vercel.json` runs `/api/cron/publish` every minute. The cron route is
 protected by `CRON_SECRET` when that variable is configured.
+
+After activating Pro, trigger a fresh production deployment so Vercel registers the
+one-minute schedule from `vercel.json`.
