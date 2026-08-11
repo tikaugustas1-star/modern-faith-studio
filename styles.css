@@ -27,7 +27,7 @@ h2 { color:var(--navy); margin:8px 0; }
 .composer form { display:grid; gap:10px; margin-top:20px; }
 .composer label { color:var(--navy); font-weight:700; }
 .composer label span { color:#70809a; font-size:13px; font-weight:400; }
-.composer textarea,.composer select { width:100%; border:1px solid #cbd6e5; border-radius:12px; padding:12px; font:inherit; color:var(--ink); background:#fbfcff; }
+.composer textarea,.composer select,.composer input { width:100%; border:1px solid #cbd6e5; border-radius:12px; padding:12px; font:inherit; color:var(--ink); background:#fbfcff; }
 .composer textarea { resize:vertical; }
 .composer button { justify-self:start; }
 .consent { display:flex; gap:8px; align-items:center; font-size:14px; font-weight:400!important; }

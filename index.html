@@ -46,6 +46,8 @@
             <textarea id="caption" rows="3" maxlength="2200" placeholder="Write a caption and hashtags..."></textarea>
             <label for="privacy">Who can view this post?</label>
             <select id="privacy" required></select>
+            <label for="scheduledFor">Publish at <span>(your local time)</span></label>
+            <input id="scheduledFor" type="datetime-local" required>
             <label class="consent"><input id="consent" type="checkbox" required> I confirm that I want to send this carousel to TikTok.</label>
             <div class="inline-actions">
               <button class="button" type="submit">Publish now</button>
@@ -58,7 +60,7 @@
         <section class="card" aria-labelledby="queueTitle">
           <div class="composer-kicker">CONTENT QUEUE</div>
           <h2 id="queueTitle">Next posts</h2>
-          <p class="muted">The queue is saved in this browser. Server-side 24/7 scheduling will be enabled after a persistent store is connected.</p>
+          <p class="muted">Posts are stored server-side and processed by Vercel Cron when their scheduled time arrives.</p>
           <div id="queueList" class="queue-list"></div>
         </section>
       </div>
@@ -84,22 +86,22 @@
         images: ['01_paisios_hook.png','02_paisios_beginning.png','03_paisios_call.png','04_paisios_cell.png','05_paisios_counsel.png','06_paisios_teaching.png','07_paisios_legacy.png'].map(file => BASE + file)
       }
     };
-    const QUEUE_KEY = 'mfs_publish_queue_v1';
     const workspace = document.getElementById('workspace');
     const connectButton = document.getElementById('connectButton');
     const creatorStatus = document.getElementById('creatorStatus');
     const batch = document.getElementById('batch');
     const photoUrls = document.getElementById('photoUrls');
     const privacy = document.getElementById('privacy');
+    const scheduledFor = document.getElementById('scheduledFor');
     const postForm = document.getElementById('postForm');
     const postStatus = document.getElementById('postStatus');
     const queueList = document.getElementById('queueList');
     const metrics = document.getElementById('metrics');
     const videoList = document.getElementById('videoList');
     const analyticsStatus = document.getElementById('analyticsStatus');
+    const defaultSchedule = new Date(Date.now() + 5 * 60 * 1000);
+    scheduledFor.value = new Date(defaultSchedule.getTime() - defaultSchedule.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
-    function getQueue() { return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]'); }
-    function saveQueue(value) { localStorage.setItem(QUEUE_KEY, JSON.stringify(value)); renderQueue(); }
     function selectedPayload() {
       return {photo_images: photoUrls.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean), description: document.getElementById('caption').value, privacy_level: privacy.value};
     }
@@ -111,21 +113,22 @@
     batch.addEventListener('change', setBatch);
     setBatch();
 
-    function renderQueue() {
-      const items = getQueue();
-      queueList.innerHTML = items.length ? items.map(item => `
+    async function loadQueue() {
+      try {
+        const response = await fetch('/api/queue/list');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not load queue.');
+        const items = data.items || [];
+        queueList.innerHTML = items.length ? items.map(item => `
         <div class="queue-item">
-          <div><strong>${item.batchLabel}</strong><small>${item.status}${item.publish_id ? ` · ${item.publish_id}` : ''}</small></div>
-          <div class="queue-actions">${item.status === 'queued' ? `<button class="text-button" data-publish="${item.id}" type="button">Publish</button>` : ''}<button class="text-button" data-remove="${item.id}" type="button">Remove</button></div>
-        </div>`).join('') : '<p class="muted">No queued posts yet.</p>';
-      queueList.querySelectorAll('[data-remove]').forEach(button => button.addEventListener('click', () => saveQueue(getQueue().filter(item => item.id !== button.dataset.remove))));
-      queueList.querySelectorAll('[data-publish]').forEach(button => button.addEventListener('click', async () => {
-        const item = getQueue().find(queueItem => queueItem.id === button.dataset.publish);
-        if (!item) return;
-        try { await publish(item.payload, item); } catch (error) { item.status = 'error'; saveQueue(getQueue().map(queueItem => queueItem.id === item.id ? item : queueItem)); setStatus(error.message, true); }
-      }));
+          <div><strong>${item.batch_label}</strong><small>${item.status} · ${new Date(item.scheduled_for).toLocaleString()}${item.publish_id ? ` · ${item.publish_id}` : ''}</small></div>
+          ${item.status === 'queued' ? `<button class="text-button" data-remove="${item.id}" type="button">Remove</button>` : ''}
+        </div>`).join('') : '<p class="muted">No scheduled posts yet.</p>';
+        queueList.querySelectorAll('[data-remove]').forEach(button => button.addEventListener('click', async () => { await fetch('/api/queue/remove', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:button.dataset.remove})}); await loadQueue(); }));
+      } catch (error) {
+        queueList.innerHTML = `<p class="muted">${error.message}</p>`;
+      }
     }
-    renderQueue();
 
     async function loadCreator() {
       workspace.hidden = false;
@@ -137,6 +140,7 @@
         creatorStatus.textContent = `Connected as @${data.creator_username || data.creator_nickname || 'TikTok creator'}.`;
         privacy.replaceChildren();
         (data.privacy_level_options || []).forEach(option => privacy.add(new Option(option.replaceAll('_', ' ').toLowerCase(), option)));
+        await loadQueue();
         await loadAnalytics();
       } catch (error) {
         creatorStatus.textContent = error.message;
@@ -160,19 +164,25 @@
       }
     }
 
-    async function publish(payload, queueItem = null) {
-      if (queueItem) { queueItem.status = 'publishing'; saveQueue(getQueue().map(item => item.id === queueItem.id ? queueItem : item)); }
+    async function publish(payload) {
       setStatus('Sending to TikTok...');
       const response = await fetch('/api/tiktok/post-photos', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'TikTok could not create the post.');
-      if (queueItem) { queueItem.status = 'submitted'; queueItem.publish_id = data.data?.publish_id || ''; saveQueue(getQueue().map(item => item.id === queueItem.id ? queueItem : item)); }
       setStatus(`Post submitted. Publish ID: ${data.data?.publish_id || 'received'}`);
       await loadAnalytics();
     }
 
     postForm.addEventListener('submit', async event => { event.preventDefault(); if (!document.getElementById('consent').checked) return; try { await publish(selectedPayload()); } catch (error) { setStatus(error.message, true); } });
-    document.getElementById('queueButton').addEventListener('click', () => { const item = {id: crypto.randomUUID(), batchLabel: BATCHES[batch.value].label, payload: selectedPayload(), status: 'queued', created_at: Date.now()}; saveQueue([...getQueue(), item]); setStatus('Added to the local queue.'); });
+    document.getElementById('queueButton').addEventListener('click', async () => {
+      if (!document.getElementById('consent').checked) return setStatus('Confirm consent before scheduling.', true);
+      try {
+        const response = await fetch('/api/queue/add', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({batch_label:BATCHES[batch.value].label, ...selectedPayload(), scheduled_for:new Date(scheduledFor.value).toISOString()})});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not schedule post.');
+        setStatus('Post scheduled on the server.'); await loadQueue();
+      } catch (error) { setStatus(error.message, true); }
+    });
     document.getElementById('refreshButton').addEventListener('click', loadAnalytics);
 
     if (new URLSearchParams(location.search).get('connected') === '1') loadCreator();
